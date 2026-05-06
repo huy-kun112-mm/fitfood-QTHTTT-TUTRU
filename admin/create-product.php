@@ -1,0 +1,510 @@
+<?php
+/**
+ * FitFood — Admin / Thêm sản phẩm
+ * URL: http://localhost:8080/admin/create-product.php
+ *
+ * Flow: GET → render form. POST → validate → INSERT → redirect về inventory.php
+ *       với flash message qua $_SESSION (session đã start ở config/database.php).
+ */
+
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/partials/auth_guard.php';
+
+// ---------- Helpers ----------
+
+/** Bỏ dấu tiếng Việt + slugify. "Gói FIT 4" → "goi-fit-4" */
+function vi_to_slug(string $name): string {
+    $name = mb_strtolower($name, 'UTF-8');
+    $repl = [
+        '/[àáảãạăằắẳẵặâầấẩẫậ]/u' => 'a',
+        '/[èéẻẽẹêềếểễệ]/u'        => 'e',
+        '/[ìíỉĩị]/u'              => 'i',
+        '/[òóỏõọôồốổỗộơờớởỡợ]/u' => 'o',
+        '/[ùúủũụưừứửữự]/u'        => 'u',
+        '/[ỳýỷỹỵ]/u'              => 'y',
+        '/đ/u'                    => 'd',
+    ];
+    foreach ($repl as $pattern => $replacement) {
+        $name = preg_replace($pattern, $replacement, $name);
+    }
+    $name = preg_replace('/[^a-z0-9]+/', '-', $name);
+    return trim($name, '-');
+}
+
+/** Trả về slug khả dụng (auto append -2, -3 nếu trùng) */
+function unique_slug(PDO $pdo, string $base): string {
+    $stmt = $pdo->prepare("SELECT 1 FROM products WHERE slug = ?");
+    $slug = $base ?: 'product';
+    $i = 2;
+    while (true) {
+        $stmt->execute([$slug]);
+        if (!$stmt->fetch()) return $slug;
+        $slug = $base . '-' . $i++;
+    }
+}
+
+// ---------- State ----------
+$errors = [];
+$old = [
+    'name'              => '',
+    'sku'               => '',
+    'category_id'       => '',
+    'type'              => 'product',
+    'price'             => '',
+    'sale_price'        => '',
+    'stock'             => '',
+    'unit'              => '',
+    'calories'          => '',
+    'is_featured'       => 0,
+    'image_url'         => '',
+    'short_description' => '',
+    'description'       => '',
+];
+
+$categories = [];
+if ($pdo) {
+    try {
+        $categories = $pdo->query(
+            "SELECT id, name FROM categories WHERE is_active = 1 ORDER BY sort_order ASC, name ASC"
+        )->fetchAll();
+    } catch (PDOException $e) {
+        error_log('[admin/create-product] ' . $e->getMessage());
+    }
+}
+
+// ---------- Handle POST ----------
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    foreach ($old as $k => $_) {
+        $old[$k] = is_array($_POST[$k] ?? null) ? '' : trim((string)($_POST[$k] ?? ''));
+    }
+    $old['is_featured'] = isset($_POST['is_featured']) ? 1 : 0;
+
+    // --- Validation ---
+    if ($old['name'] === '') {
+        $errors['name'] = 'Tên sản phẩm không được để trống.';
+    } elseif (mb_strlen($old['name']) > 200) {
+        $errors['name'] = 'Tên sản phẩm tối đa 200 ký tự.';
+    }
+
+    if ($old['sku'] === '') {
+        $errors['sku'] = 'SKU không được để trống.';
+    } elseif (mb_strlen($old['sku']) > 50) {
+        $errors['sku'] = 'SKU tối đa 50 ký tự.';
+    }
+
+    if ($old['category_id'] === '' || !ctype_digit($old['category_id'])) {
+        $errors['category_id'] = 'Vui lòng chọn danh mục.';
+    }
+
+    if (!in_array($old['type'], ['package', 'product'], true)) {
+        $errors['type'] = 'Loại sản phẩm không hợp lệ.';
+    }
+
+    if ($old['price'] === '' || !is_numeric($old['price']) || (float)$old['price'] < 0) {
+        $errors['price'] = 'Giá phải là số không âm.';
+    }
+
+    if ($old['sale_price'] !== '') {
+        if (!is_numeric($old['sale_price']) || (float)$old['sale_price'] < 0) {
+            $errors['sale_price'] = 'Giá khuyến mãi phải là số không âm.';
+        } elseif (!isset($errors['price']) && (float)$old['sale_price'] >= (float)$old['price']) {
+            $errors['sale_price'] = 'Giá khuyến mãi phải nhỏ hơn giá gốc.';
+        }
+    }
+
+    if ($old['stock'] === '' || !ctype_digit($old['stock'])) {
+        $errors['stock'] = 'Tồn kho phải là số nguyên không âm.';
+    }
+
+    if ($old['calories'] !== '' && !ctype_digit($old['calories'])) {
+        $errors['calories'] = 'Calo phải là số nguyên không âm.';
+    }
+
+    if ($old['image_url'] === '') {
+        $errors['image_url'] = 'URL ảnh không được để trống.';
+    } elseif (!filter_var($old['image_url'], FILTER_VALIDATE_URL)) {
+        $errors['image_url'] = 'URL ảnh không hợp lệ.';
+    }
+
+    if (mb_strlen($old['short_description']) > 255) {
+        $errors['short_description'] = 'Mô tả ngắn tối đa 255 ký tự.';
+    }
+
+    // --- Check SKU uniqueness (nếu chưa có lỗi sku khác) ---
+    if (empty($errors['sku']) && $pdo) {
+        try {
+            $check = $pdo->prepare("SELECT 1 FROM products WHERE sku = ?");
+            $check->execute([$old['sku']]);
+            if ($check->fetch()) {
+                $errors['sku'] = 'SKU "' . $old['sku'] . '" đã tồn tại. Vui lòng nhập SKU khác.';
+            }
+        } catch (PDOException $e) {
+            $errors['_db'] = 'Lỗi kiểm tra SKU: ' . $e->getMessage();
+        }
+    }
+
+    if (!$pdo) {
+        $errors['_db'] = 'Không kết nối được database.';
+    }
+
+    // --- INSERT ---
+    if (empty($errors)) {
+        try {
+            $slug = unique_slug($pdo, vi_to_slug($old['name']));
+
+            $stmt = $pdo->prepare(
+                "INSERT INTO products
+                 (sku, category_id, name, slug, type,
+                  short_description, description,
+                  price, sale_price, calories, unit,
+                  stock, image_url, is_featured, is_active)
+                 VALUES
+                 (:sku, :category_id, :name, :slug, :type,
+                  :short_description, :description,
+                  :price, :sale_price, :calories, :unit,
+                  :stock, :image_url, :is_featured, 1)"
+            );
+
+            $stmt->execute([
+                ':sku'               => $old['sku'],
+                ':category_id'       => (int)$old['category_id'],
+                ':name'              => $old['name'],
+                ':slug'              => $slug,
+                ':type'              => $old['type'],
+                ':short_description' => $old['short_description'] !== '' ? $old['short_description'] : null,
+                ':description'       => $old['description']       !== '' ? $old['description']       : null,
+                ':price'             => (float)$old['price'],
+                ':sale_price'        => $old['sale_price'] !== '' ? (float)$old['sale_price'] : null,
+                ':calories'          => $old['calories']   !== '' ? (int)$old['calories']     : null,
+                ':unit'              => $old['unit']       !== '' ? $old['unit']              : null,
+                ':stock'             => (int)$old['stock'],
+                ':image_url'         => $old['image_url'],
+                ':is_featured'       => $old['is_featured'],
+            ]);
+
+            $_SESSION['flash_success'] = 'Đã thêm sản phẩm "' . $old['name'] . '" thành công.';
+            header('Location: inventory.php');
+            exit;
+        } catch (PDOException $e) {
+            $errors['_db'] = 'Lỗi khi lưu sản phẩm: ' . $e->getMessage();
+            error_log('[admin/create-product] insert: ' . $e->getMessage());
+        }
+    }
+}
+
+$active_page = 'inventory';
+
+/** Helper render error nhỏ phía dưới input */
+function err(string $field, array $errors): string {
+    if (empty($errors[$field])) return '';
+    return '<div class="invalid-feedback d-block">' . htmlspecialchars($errors[$field]) . '</div>';
+}
+
+/** Helper thêm class is-invalid nếu field có lỗi */
+function inv(string $field, array $errors): string {
+    return empty($errors[$field]) ? '' : 'is-invalid';
+}
+?>
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>Thêm sản phẩm - FitFood Admin</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link rel="apple-touch-icon" sizes="180x180" href="./assets/images/favicon_io/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32"  href="./assets/images/favicon_io/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16"  href="./assets/images/favicon_io/favicon-16x16.png">
+  <link rel="manifest" href="./assets/images/favicon_io/site.webmanifest">
+
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.35.0/dist/tabler-icons.min.css" rel="stylesheet">
+
+  <link rel="stylesheet" href="./assets/css/style.css">
+</head>
+<body>
+
+<div id="overlay" class="overlay"></div>
+
+<!-- TOPBAR -->
+<nav id="topbar" class="navbar bg-white border-bottom fixed-top topbar px-3">
+  <button id="toggleBtn" class="d-none d-lg-inline-flex btn btn-light btn-icon btn-sm">
+    <i class="ti ti-layout-sidebar-left-expand"></i>
+  </button>
+  <button id="mobileBtn" class="btn btn-light btn-icon btn-sm d-lg-none me-2">
+    <i class="ti ti-layout-sidebar-left-expand"></i>
+  </button>
+  <div>
+    <ul class="list-unstyled d-flex align-items-center mb-0 gap-1">
+      <li>
+        <a class="position-relative btn-icon btn-sm btn-light btn rounded-circle" href="#" role="button">
+          <i class="ti ti-bell"></i>
+        </a>
+      </li>
+      <li class="ms-3 dropdown">
+        <a href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <img src="./assets/images/avatar/avatar-1.jpg" alt="" class="avatar avatar-sm rounded-circle">
+        </a>
+        <div class="dropdown-menu dropdown-menu-end p-0" style="min-width: 200px;">
+          <div class="d-flex gap-3 align-items-center border-bottom px-3 py-3">
+            <img src="./assets/images/avatar/avatar-1.jpg" alt="" class="avatar avatar-md rounded-circle">
+            <div>
+              <h4 class="mb-0 small">Admin FitFood</h4>
+              <p class="mb-0 small text-muted">@admin</p>
+            </div>
+          </div>
+          <div class="p-3 d-flex flex-column gap-1 small lh-lg">
+            <a href="../index.php" class="text-body">Về trang chủ</a>
+            <a href="../logout.php" class="text-body">Đăng xuất</a>
+          </div>
+        </div>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<?php include __DIR__ . '/partials/sidebar.php'; ?>
+
+<main id="content" class="content py-10">
+  <div class="container-fluid pt-5">
+
+    <div class="row mt-4">
+      <div class="col-12">
+        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center mb-4 gap-3">
+          <div>
+            <h1 class="fs-3 mb-1">Thêm sản phẩm</h1>
+            <p class="mb-0 text-muted">Tạo sản phẩm mới cho cửa hàng FitFood.</p>
+          </div>
+          <div>
+            <a href="inventory.php" class="btn btn-outline-secondary">
+              <i class="ti ti-arrow-left me-1"></i>Về danh sách
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <?php if (!empty($errors['_db'])): ?>
+      <div class="alert alert-danger" role="alert">
+        <i class="ti ti-alert-triangle me-2"></i>
+        <?= htmlspecialchars($errors['_db']) ?>
+      </div>
+    <?php endif; ?>
+
+    <div class="row">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-body p-4">
+            <form method="POST" action="create-product.php" novalidate>
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <label for="name" class="form-label">Tên sản phẩm <span class="text-danger">*</span></label>
+                  <input type="text" name="name" id="name"
+                         class="form-control <?= inv('name', $errors) ?>"
+                         value="<?= htmlspecialchars($old['name']) ?>"
+                         placeholder="Ví dụ: Gói FIT 4 — Trưa ăn nhẹ">
+                  <?= err('name', $errors) ?>
+                  <div class="form-text">Slug sẽ được tự động sinh từ tên (bỏ dấu tiếng Việt).</div>
+                </div>
+                <div class="col-md-6 mb-3">
+                  <label for="sku" class="form-label">SKU <span class="text-danger">*</span></label>
+                  <input type="text" name="sku" id="sku"
+                         class="form-control <?= inv('sku', $errors) ?>"
+                         value="<?= htmlspecialchars($old['sku']) ?>"
+                         placeholder="Ví dụ: FF-PKG-016">
+                  <?= err('sku', $errors) ?>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <label for="type" class="form-label">Loại <span class="text-danger">*</span></label>
+                  <select name="type" id="type" class="form-select <?= inv('type', $errors) ?>">
+                    <option value="package" <?= $old['type'] === 'package' ? 'selected' : '' ?>>Gói ăn (package)</option>
+                    <option value="product" <?= $old['type'] === 'product' ? 'selected' : '' ?>>Sản phẩm lẻ (product)</option>
+                  </select>
+                  <?= err('type', $errors) ?>
+                </div>
+                <div class="col-md-6 mb-3">
+                  <label for="category_id" class="form-label">Danh mục <span class="text-danger">*</span></label>
+                  <select name="category_id" id="category_id"
+                          class="form-select <?= inv('category_id', $errors) ?>">
+                    <option value="">— Chọn danh mục —</option>
+                    <?php foreach ($categories as $c): ?>
+                      <option value="<?= (int)$c['id'] ?>"
+                        <?= $old['category_id'] === (string)$c['id'] ? 'selected' : '' ?>>
+                        <?= htmlspecialchars($c['name']) ?>
+                      </option>
+                    <?php endforeach; ?>
+                  </select>
+                  <?= err('category_id', $errors) ?>
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <label for="price" class="form-label">Giá gốc (VND) <span class="text-danger">*</span></label>
+                  <input type="number" name="price" id="price"
+                         class="form-control <?= inv('price', $errors) ?>"
+                         value="<?= htmlspecialchars($old['price']) ?>"
+                         min="0" step="1000" placeholder="650000">
+                  <?= err('price', $errors) ?>
+                  <div class="form-text">Giá niêm yết. Sẽ bị gạch ngang khi có giá khuyến mãi.</div>
+                </div>
+                <div class="col-md-6 mb-3">
+                  <label for="sale_price" class="form-label">Giá khuyến mãi (VND)</label>
+                  <input type="number" name="sale_price" id="sale_price"
+                         class="form-control <?= inv('sale_price', $errors) ?>"
+                         value="<?= htmlspecialchars($old['sale_price']) ?>"
+                         min="0" step="1000" placeholder="(để trống nếu không có)">
+                  <?= err('sale_price', $errors) ?>
+                  <div class="form-text">Bỏ trống nếu không có khuyến mãi. Bắt buộc <strong>nhỏ hơn</strong> giá gốc.</div>
+                </div>
+              </div>
+
+              <!-- Preview giá bán thực tế (effective price) — giúp tránh nhầm "Giá gốc" với "Giá đang bán" -->
+              <div class="alert alert-info py-2 px-3 mb-3 d-flex align-items-center gap-2 small">
+                <i class="ti ti-tag"></i>
+                <span>Giá đang bán (hiển thị ngoài store):</span>
+                <strong id="effectivePrice" class="ms-1">—</strong>
+                <span id="effectiveOriginal" class="text-muted text-decoration-line-through ms-2"></span>
+              </div>
+
+              <div class="row">
+                <div class="col-md-4 mb-3">
+                  <label for="stock" class="form-label">Tồn kho <span class="text-danger">*</span></label>
+                  <input type="number" name="stock" id="stock"
+                         class="form-control <?= inv('stock', $errors) ?>"
+                         value="<?= htmlspecialchars($old['stock']) ?>"
+                         min="0" step="1" placeholder="100">
+                  <?= err('stock', $errors) ?>
+                </div>
+                <div class="col-md-4 mb-3">
+                  <label for="unit" class="form-label">Đơn vị</label>
+                  <input type="text" name="unit" id="unit"
+                         class="form-control <?= inv('unit', $errors) ?>"
+                         value="<?= htmlspecialchars($old['unit']) ?>"
+                         placeholder="6 bữa/tuần, 200 Gram/Hộp…">
+                  <?= err('unit', $errors) ?>
+                </div>
+                <div class="col-md-4 mb-3">
+                  <label for="calories" class="form-label">Calo (kcal)</label>
+                  <input type="number" name="calories" id="calories"
+                         class="form-control <?= inv('calories', $errors) ?>"
+                         value="<?= htmlspecialchars($old['calories']) ?>"
+                         min="0" step="1" placeholder="(tuỳ chọn)">
+                  <?= err('calories', $errors) ?>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="image_url" class="form-label">URL ảnh sản phẩm <span class="text-danger">*</span></label>
+                <input type="url" name="image_url" id="image_url"
+                       class="form-control <?= inv('image_url', $errors) ?>"
+                       value="<?= htmlspecialchars($old['image_url']) ?>"
+                       placeholder="https://fitfood.vn/static/sizes/...">
+                <?= err('image_url', $errors) ?>
+                <div class="mt-2">
+                  <img id="imgPreview" src="<?= htmlspecialchars($old['image_url'] ?: '') ?>"
+                       alt="Preview" style="max-height: 120px; <?= $old['image_url'] === '' ? 'display:none;' : '' ?>"
+                       class="rounded border">
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="short_description" class="form-label">Mô tả ngắn</label>
+                <input type="text" name="short_description" id="short_description"
+                       class="form-control <?= inv('short_description', $errors) ?>"
+                       value="<?= htmlspecialchars($old['short_description']) ?>"
+                       maxlength="255" placeholder="Tối đa 255 ký tự, hiển thị ở danh sách">
+                <?= err('short_description', $errors) ?>
+              </div>
+
+              <div class="mb-3">
+                <label for="description" class="form-label">Mô tả chi tiết</label>
+                <textarea name="description" id="description" rows="4"
+                          class="form-control <?= inv('description', $errors) ?>"
+                          placeholder="Mô tả chi tiết về sản phẩm…"><?= htmlspecialchars($old['description']) ?></textarea>
+                <?= err('description', $errors) ?>
+              </div>
+
+              <div class="mb-4 form-check">
+                <input type="checkbox" name="is_featured" id="is_featured" value="1"
+                       class="form-check-input"
+                       <?= $old['is_featured'] ? 'checked' : '' ?>>
+                <label for="is_featured" class="form-check-label">
+                  Sản phẩm nổi bật (hiển thị ưu tiên ở trang chủ)
+                </label>
+              </div>
+
+              <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                  <i class="ti ti-check me-1"></i>Tạo sản phẩm
+                </button>
+                <button type="reset" class="btn btn-light">Xoá nhập</button>
+                <a href="inventory.php" class="btn btn-link text-secondary">Huỷ</a>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row mt-3">
+      <div class="col-12">
+        <footer class="text-center py-2 mt-6 text-secondary">
+          <p class="mb-0 small">© 2026 FitFood Admin.</p>
+        </footer>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="./assets/js/main.js"></script>
+<script>
+  // Image preview khi user nhập URL
+  (function () {
+    const url = document.getElementById('image_url');
+    const img = document.getElementById('imgPreview');
+    if (!url || !img) return;
+    url.addEventListener('input', () => {
+      const v = url.value.trim();
+      if (v) { img.src = v; img.style.display = ''; }
+      else   { img.style.display = 'none'; }
+    });
+    img.addEventListener('error', () => { img.style.display = 'none'; });
+  })();
+
+  // Live preview "Giá đang bán"
+  (function () {
+    const priceEl = document.getElementById('price');
+    const saleEl  = document.getElementById('sale_price');
+    const effEl   = document.getElementById('effectivePrice');
+    const origEl  = document.getElementById('effectiveOriginal');
+    if (!priceEl || !saleEl || !effEl) return;
+
+    const fmt = new Intl.NumberFormat('vi-VN');
+    const toNum = v => {
+      const n = parseFloat(String(v).replace(/[^\d.-]/g, ''));
+      return isFinite(n) ? n : NaN;
+    };
+
+    function update() {
+      const p  = toNum(priceEl.value);
+      const sp = toNum(saleEl.value);
+      const hasSale = !isNaN(sp) && sp > 0 && !isNaN(p) && sp < p;
+      const effective = hasSale ? sp : (isNaN(p) ? null : p);
+
+      effEl.textContent  = effective !== null ? fmt.format(effective) + '₫' : '—';
+      origEl.textContent = hasSale ? fmt.format(p) + '₫' : '';
+    }
+    priceEl.addEventListener('input', update);
+    saleEl.addEventListener('input',  update);
+    update();
+  })();
+</script>
+</body>
+</html>

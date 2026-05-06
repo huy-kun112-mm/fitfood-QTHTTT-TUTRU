@@ -1,0 +1,234 @@
+/* ==========================================================
+   CSS CHO POPUP ĐĂNG KÝ - FITFOOD
+   Class được đặt hậu tố -ff để tránh xung đột với Bootstrap
+   và CSS có sẵn của fitfood.vn
+   ========================================================== */
+
+/* ----- OVERLAY ----- */
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0, 0, 0, .55);
+    z-index: 99999;          /* cao hơn navbar của fitfood */
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+}
+.modal-overlay.active {
+    display: flex;
+    animation: ffFadeIn .2s ease;
+}
+@keyframes ffFadeIn {
+    from { opacity: 0; } to { opacity: 1; }
+}
+
+/* ----- HỘP POPUP ----- */
+.modal-overlay .modal-box {
+    background: #fff;
+    width: 100%;
+    max-width: 480px;
+    border-radius: 10px;
+    padding: 40px 50px;
+    position: relative;
+    animation: ffSlideDown .3s ease;
+    max-height: 95vh;
+    overflow-y: auto;
+    font-family: 'Montserrat', 'Segoe UI', sans-serif;
+}
+@keyframes ffSlideDown {
+    from { transform: translateY(-30px); opacity: 0; }
+    to   { transform: translateY(0);    opacity: 1; }
+}
+.modal-overlay .modal-close {
+    position: absolute;
+    top: 10px;
+    right: 16px;
+    background: none;
+    border: none;
+    font-size: 32px;
+    color: #999;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+}
+.modal-overlay .modal-close:hover { color: #333; }
+
+.modal-overlay .modal-title {
+    text-align: center;
+    font-size: 30px;
+    font-weight: 700;
+    margin: 0 0 14px;
+    color: #222;
+}
+.modal-overlay .modal-subtitle {
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+    margin: 0 0 26px;
+}
+.modal-overlay .modal-subtitle a {
+    color: #f44336;
+    font-weight: 600;
+    text-decoration: none;
+}
+.modal-overlay .modal-subtitle a:hover { text-decoration: underline; }
+
+/* ----- FORM GROUP (đặt tên riêng để không xung đột với Bootstrap .form-group) ----- */
+.modal-overlay .form-group-ff { margin-bottom: 14px; }
+.modal-overlay .form-group-ff input {
+    width: 100%;
+    padding: 14px 18px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color .2s;
+    outline: none;
+    font-family: inherit;
+    box-sizing: border-box;
+}
+.modal-overlay .form-group-ff input:focus { border-color: #f44336; }
+.modal-overlay .form-group-ff input.error {
+    border-color: #f44336;
+    background: #fff5f5;
+}
+.modal-overlay .form-error {
+    color: #f44336;
+    font-size: 12.5px;
+    margin-top: 5px;
+    padding-left: 4px;
+    display: none;
+}
+.modal-overlay .form-error.show { display: block; }
+
+/* ----- NÚT ĐĂNG KÝ (đỏ) ----- */
+.modal-overlay .btn-submit-ff {
+    width: 100%;
+    padding: 14px;
+    background: #f23a3a;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 10px;
+    font-family: inherit;
+    transition: background .2s;
+}
+.modal-overlay .btn-submit-ff:hover:not(:disabled) { background: #d32f2f; }
+.modal-overlay .btn-submit-ff:disabled { opacity: .6; cursor: not-allowed; }
+
+/* ----- DIVIDER ----- */
+.modal-overlay .divider-ff {
+    display: flex;
+    align-items: center;
+    margin: 22px 0 16px;
+    color: #999;
+    font-size: 13px;
+    font-style: italic;
+}
+.modal-overlay .divider-ff::before,
+.modal-overlay .divider-ff::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #e0e0e0;
+}
+.modal-overlay .divider-ff::before { margin-right: 14px; }
+.modal-overlay .divider-ff::after  { margin-left: 14px; }
+
+/* ----- NÚT GOOGLE ----- */
+.modal-overlay .btn-google-ff {
+    width: 100%;
+    padding: 13px;
+    background: #4285F4;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-family: inherit;
+    transition: background .2s;
+}
+.modal-overlay .btn-google-ff:hover { background: #3367D6; }
+.modal-overlay .btn-google-ff .g-icon {
+    background: #fff;
+    color: #4285F4;
+    width: 22px;
+    height: 22px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 15px;
+}
+
+/* ----- THÔNG BÁO ----- */
+.modal-overlay .form-message {
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 14px;
+    display: none;
+}
+.modal-overlay .form-message.success {
+    background: #e8f5e9;
+    color: #2e7d32;
+    border: 1px solid #a5d6a7;
+    display: block;
+}
+.modal-overlay .form-message.error {
+    background: #ffebee;
+    color: #c62828;
+    border: 1px solid #ef9a9a;
+    display: block;
+}
+
+/* ----- Responsive ----- */
+@media (max-width: 560px) {
+    .modal-overlay .modal-box { padding: 30px 24px; }
+    .modal-overlay .modal-title { font-size: 24px; }
+}
+
+/* ==========================================================
+   CSS CHO NAVBAR KHI ĐÃ ĐĂNG NHẬP
+   ========================================================== */
+
+/* Khối chứa tên + đăng xuất (thay chỗ 2 nút đăng ký/đăng nhập) */
+.nav-user-info {
+    display: flex;
+    flex-direction: column;    /* tên trên, đăng xuất dưới */
+    align-items: flex-end;
+    line-height: 1.2;
+}
+
+/* Tên người dùng */
+.nav-username {
+    color: #fff !important;
+    font-weight: 600;
+    font-size: 13px;
+    padding: 4px 0 2px !important;
+    cursor: default;
+    white-space: nowrap;
+}
+
+/* Link đăng xuất */
+.nav-logout {
+    color: #ff7676 !important;
+    font-size: 12px;
+    padding: 0 !important;
+    text-decoration: none;
+    transition: color .2s;
+}
+.nav-logout:hover {
+    color: #ff4444 !important;
+    text-decoration: underline;
+}
