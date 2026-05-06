@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # ===== PHP + Apache =====
+  web:
+    image: php:8.2-apache
+    container_name: fitfood_web
+    ports:
+      - "8080:80"                     # Truy cập: http://localhost:8080
+    volumes:
+      - ./:/var/www/html              # Mount toàn bộ code vào container
+    environment:
+      DB_HOST: db
+      DB_NAME: fitfood
+      DB_USER: fitfood_user
+      DB_PASS: fitfood_pass
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      bash -c "docker-php-ext-install pdo pdo_mysql mysqli
+      && a2enmod rewrite
+      && apache2-foreground"
+
+  # ===== MySQL 8 =====
+  db:
+    image: mysql:8.0
+    container_name: fitfood_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: fitfood
+      MYSQL_USER: fitfood_user
+      MYSQL_PASSWORD: fitfood_pass
+    ports:
+      - "3307:3306"                   # Ra ngoài cổng 3307 để tránh đụng MySQL có sẵn trên máy
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database/fitfood.sql:/docker-entrypoint-initdb.d/fitfood.sql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --skip-character-set-client-handshake
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ===== phpMyAdmin (quản lý DB qua web) =====
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: fitfood_pma
+    ports:
+      - "8081:80"                     # Truy cập: http://localhost:8081
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: rootpass
+    depends_on:
+      - db
+
+volumes:
+  db_data:

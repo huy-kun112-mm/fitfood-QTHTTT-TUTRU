@@ -1,0 +1,16 @@
+{
+    "name": "fitfood/web",
+    "description": "FitFood Vietnam web application",
+    "type": "project",
+    "require": {
+        "php": ">=8.0",
+        "google/apiclient": "^2.15"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true,
+        "platform": {
+            "php": "8.2"
+        }
+    }
+}
